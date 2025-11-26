@@ -9,16 +9,19 @@ from datetime import datetime, timedelta
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="量化交易策略系統", layout="wide")
-st.title("📈 智能股票交易系統")
 
 # --- 側邊欄：參數設定 ---
 st.sidebar.header("📊 參數設定 (Parameters)")
 
-# 修改 1: 預設值改為空白
+# 預設值改為空白
 ticker = st.sidebar.text_input("輸入股票代碼", value="") 
 st.sidebar.caption("範例: QQQ, VOO, NVDA, 2330.TW")
 
-with st.sidebar.expander("🔧 技術指標參數", expanded=True):
+# 修改 1: 將開始按鈕移至此處 (股票代碼下方)
+run_button = st.sidebar.button("開始策略回測", type="primary")
+
+# 修改 2: 技術指標參數預設為關閉 (expanded=False)
+with st.sidebar.expander("🔧 技術指標參數", expanded=False):
     # MACD
     st.write("**MACD**")
     macd_fast = st.number_input("Fast Period", value=12)
@@ -47,12 +50,12 @@ with st.sidebar.expander("🔧 技術指標參數", expanded=True):
     osc_long = st.number_input("OSC Long MA", value=20)
     osc_ema_len = st.number_input("OSC EMA Period", value=10)
 
-# 修改 2: 新增圖表高度設定
+# 圖表顯示設定
 st.sidebar.subheader("🎨 圖表顯示設定")
 chart_height = st.sidebar.number_input("圖表高度 (px)", value=1200, min_value=600, max_value=3000, step=100)
 
-# 修改 3: 開始日期預設為 2023/1/1
-start_date = st.sidebar.date_input("開始日期", value=datetime(2023, 1, 1))
+# 修改 3: 開始日期預設為 2000/1/1 (最早)
+start_date = st.sidebar.date_input("開始日期", value=datetime(2000, 1, 1))
 
 # --- 核心邏輯函數 ---
 def calculate_strategy(df):
@@ -115,7 +118,7 @@ def calculate_strategy(df):
         df['KDJ_Gold']
     )
     
-    # 🔴 原始賣出條件 (3選2)
+    # 🔴 原始賣出條件 (3選1)
     cond_kdj_dead_high = df['KDJ_Dead'] & (df[col_d] > kdj_high)
     osc_cross_down = (df['OSC'] < df['OSCEMA']) & (df['OSC'].shift(1) > df['OSCEMA'].shift(1))
     cond_osc_weak_high = osc_cross_down & (df['OSC'] > 0)
@@ -127,9 +130,10 @@ def calculate_strategy(df):
         cond_rsi_hot.astype(int)
     )
     
-    raw_sell = sell_condition_count >= 2
+    # 賣出觸發 - 滿足至少 1 個條件
+    raw_sell = sell_condition_count >= 1
     
-    # 4. 訊號過濾與資金回測 (Updated Logic)
+    # 4. 訊號過濾與資金回測
     
     buy_signals = []
     sell_signals = []
@@ -151,7 +155,6 @@ def calculate_strategy(df):
         is_sell_raw = raw_sell_list[i]
         current_price = close_prices[i]
         
-        # 修改 2: 買入訊號不再受 holding 狀態限制，只要符合條件就標記
         current_buy_signal = 1 if is_buy_raw else 0
         current_sell_signal = 0
         
@@ -166,16 +169,14 @@ def calculate_strategy(df):
                 cash = 0
         else:
             # 持倉狀態
-            if is_sell_raw:
+            # 賣出時必須有正收益
+            if is_sell_raw and (current_price > entry_price):
                 # 執行賣出
-                current_sell_signal = 1 # 只有在持倉時且觸發賣出條件，才標記賣出
+                current_sell_signal = 1 
                 holding = False
                 cash = position_size * current_price
                 position_size = 0
                 entry_price = 0
-            
-            # 註：如果在持倉時遇到 is_buy_raw，我們會標記買入訊號 (current_buy_signal=1)，
-            # 但因為資金已滿 (All-in)，所以不會有額外的資金動作，視為「持倉/加倉建議」。
         
         buy_signals.append(current_buy_signal)
         sell_signals.append(current_sell_signal)
@@ -195,14 +196,22 @@ def calculate_strategy(df):
     return df, col_k, col_d, last_entry_price_record
 
 # --- 主程式執行 ---
-if st.button("開始策略回測", type="primary"):
-    # 修改 3: 檢查是否輸入股票代碼
+if run_button: # 修改: 使用側邊欄按鈕變數
+    # 檢查是否輸入股票代碼
     if not ticker.strip():
         st.warning("⚠️ 請輸入股票代碼 (例如 NVDA) 才能開始分析！")
         st.stop()
         
     with st.spinner(f'正在運算 {ticker} 的交易策略...'):
         try:
+            # 嘗試獲取股票名稱
+            stock_name = ticker
+            try:
+                stock_info = yf.Ticker(ticker).info
+                stock_name = stock_info.get('longName', stock_info.get('shortName', ticker))
+            except Exception:
+                pass
+
             # 1. 下載數據
             df = yf.download(ticker, start=start_date, progress=False, auto_adjust=True)
             
@@ -224,6 +233,7 @@ if st.button("開始策略回測", type="primary"):
                 
                 # 3. 顯示結果
                 st.markdown("---")
+                st.markdown(f"### 🪙 {ticker} - {stock_name}") # 顯示股票代碼與名稱
                 
                 c1, c2, c3, c4 = st.columns(4)
                 
@@ -260,11 +270,12 @@ if st.button("開始策略回測", type="primary"):
                     st.write(f"- KDJ 交叉: {'🟡 金叉' if curr['KDJ_Gold'] else ('⚫ 死叉' if curr['KDJ_Dead'] else '無')}")
 
                 # --- 繪圖 (Plotly) ---
-                st.subheader(f"📊 {ticker} 策略訊號圖")
+                st.subheader(f"📊 {stock_name} ({ticker}) 策略訊號圖") # 圖表標題加入名稱
                 
                 buy_points = df[df['Buy_Signal'] == 1]
                 sell_points = df[df['Sell_Signal'] == 1]
                 
+                # 設定 5 個子圖: K線, 交易量, MACD, KDJ, RSI
                 fig = make_subplots(rows=5, cols=1, shared_xaxes=True, 
                                     vertical_spacing=0.02, 
                                     row_heights=[0.4, 0.15, 0.15, 0.15, 0.15],
@@ -313,23 +324,21 @@ if st.button("開始策略回測", type="primary"):
                 fig.add_hline(y=80, line_color="red", line_dash="dash", row=5, col=1)
                 fig.add_hline(y=20, line_color="green", line_dash="dash", row=5, col=1)
                 
-                # 修改 4: 使用自訂高度
-                fig.update_layout(height=chart_height, xaxis_rangeslider_visible=False, template="plotly_white")
+                # 設定初始顯示範圍 (強制鎖定最近一年)
+                # 使用 update_xaxes 可以同時套用到所有共享的 x 軸
+                last_dt = df.index[-1]
+                first_view_dt = last_dt - timedelta(days=365)
+                
+                fig.update_xaxes(range=[first_view_dt, last_dt])
+                
+                fig.update_layout(
+                    height=chart_height, 
+                    xaxis_rangeslider_visible=False, 
+                    template="plotly_white"
+                )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                st.subheader("📋 訊號數據明細 (Data Log)")
-                
-                output_cols = ['Close', 'Total_Asset', 'MA5', 'MA90', 'Volume', 'RSI', 'MTM', 'MTMMA', 'OSC', 'OSCEMA', col_k, col_d, 'Buy_Signal', 'Sell_Signal']
-                
-                st.dataframe(df[output_cols].tail(50))
-                
-                csv = df.to_csv().encode('utf-8')
-                st.download_button(
-                    label="📥 下載完整 CSV",
-                    data=csv,
-                    file_name=f'{ticker}_strategy_result.csv',
-                    mime='text/csv',
-                )
+                # 移除訊號數據明細
 
         except Exception as e:
             st.error("發生錯誤：")
