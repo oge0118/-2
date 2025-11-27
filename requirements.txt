@@ -1,1 +1,5 @@
-streamlit yfinance pandas_ta plotly pandas
+streamlit
+yfinance
+pandas_ta
+plotly
+pandas
