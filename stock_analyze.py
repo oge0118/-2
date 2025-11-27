@@ -38,7 +38,7 @@ def load_stock_data(ticker, start_date, interval):
 st.sidebar.header("📊 參數設定")
 
 ticker_input = st.sidebar.text_input("輸入股票代碼", value="") 
-st.sidebar.caption("範例: QQQ, VOO, NVDA, 2330 (台股輸入數字即可)")
+st.sidebar.caption("範例: QQQ, VOO, 2330 (台股輸入數字即可)")
 
 # 自動判斷邏輯
 ticker = ticker_input.strip().upper()
